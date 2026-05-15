@@ -6,15 +6,14 @@ from os import listdir
 from time import strptime, sleep
 from utility import generate_event_text, load_data, dump_data
 from notifications_manager import set_up_notification, delete_notification
-from config import BOT_TOKEN
+import os
 
 # تهيئة البوت والموزع المتوافق مع الإصدار الحديث مرة واحدة فقط
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 logging.basicConfig(level=logging.INFO)
-
 
 
 # The states of user interaction we need
