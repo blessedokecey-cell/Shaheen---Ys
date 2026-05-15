@@ -1,9 +1,7 @@
-#!venv/bin/python
+#!/venv/bin/python
 import logging
-from aiogram import Bot, Dispatcher, executor, types
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.filters import Text
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from os import listdir
