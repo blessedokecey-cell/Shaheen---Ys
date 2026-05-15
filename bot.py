@@ -1,21 +1,20 @@
-#!/venv/bin/python
+import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from aiogram.dispatcher.filters import Text
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.fsm.storage.memory import MemoryStorage
 from os import listdir
 from time import strptime, sleep
 from utility import generate_event_text, load_data, dump_data
 from notifications_manager import set_up_notification, delete_notification
 from config import BOT_TOKEN
 
-
-# We set up bot and storage in RAM in order to save user states
+# تهيئة البوت والموزع المتوافق مع الإصدار الحديث مرة واحدة فقط
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+dp = Dispatcher(storage=storage)
+
 logging.basicConfig(level=logging.INFO)
+
 
 
 # The states of user interaction we need
@@ -208,7 +207,7 @@ async def display_events(call: types.CallbackQuery):
 
 
 # Shows user a details of the event he cliked on
-@dp.callback_query_handler(Text(startswith="disp_"))
+@dp.callback_query(lambda call: call.data.startswith("disp_"))
 async def show_event(call: types.CallbackQuery):
     event_num = int(call.data.split("_")[1])
     user_data = load_data(call.from_user.id)
@@ -225,13 +224,13 @@ async def show_event(call: types.CallbackQuery):
     await call.message.edit_text(text=event_output, parse_mode=types.ParseMode.HTML, reply_markup=keyboard)
 
 
-@dp.callback_query_handler(text="main_menu")
+@dp.callback_query(lambda call: call.data == "main_menu")
 async def show_main_menu(call: types.CallbackQuery):
     await call.answer()
     await display_main_menu(call.message)
 
 
-@dp.callback_query_handler(Text(startswith="del_"))
+@dp.callback_query(lambda call: call.data.startswith("del_"))
 async def delete_event(call: types.CallbackQuery):
     event_num = int(call.data.split("_")[1])
     user_data = load_data(call.from_user.id)
@@ -243,7 +242,12 @@ async def delete_event(call: types.CallbackQuery):
     await call.answer()
     await display_main_menu(call.message)
 
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
+
 
         
