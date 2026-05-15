@@ -1,18 +1,17 @@
 from aiogram import Dispatcher, Bot
 from crontab import *
-from config import BOT_TOKEN
+import os
 from utility import generate_event_text
 import logging
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+# تهيئة البوت والموزع المتوافق بشكل مفرد وصحيح
+bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
+dp = Dispatcher()
+
 logging.basicConfig(level=logging.INFO)
 
 DELAY = -30
 
-
-def create_job(event_id: int, chat_id: int, text: str, wday: str,  time: str):
-    print(event_id, chat_id, text, wday, time)
     my_cron = CronTab(user="your_user_name")
     command_at = 'python3 /home/zavid/Scheduler_Bot/sender.py {0!s} \'{1!s}\''.format(chat_id, text)
     job = my_cron.new(command=command_at, comment=str(event_id))
