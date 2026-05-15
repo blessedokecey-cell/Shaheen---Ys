@@ -1,123 +1,250 @@
-import os
-import asyncio
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
-from pyrogram.errors import UserNotParticipant
+#!venv/bin/python
+import logging
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher.filters import Text
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from os import listdir
+from time import strptime, sleep
+from utility import generate_event_text, load_data, dump_data
+from notifications_manager import set_up_notification, delete_notification
+from config import BOT_TOKEN
 
-# --- إعدادات البوت (تُجلب من متغيرات البيئة في Railway) ---
-API_ID = int(os.environ.get("API_ID", 1234567))        
-API_HASH = os.environ.get("API_HASH", "abcdefg")   
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "your_bot_token") 
-DEVELOPER_ID = int(os.environ.get("DEVELOPER_ID", 12345678))  
-CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "my_channel") 
 
-# روابط الوسائط
-WELCOME_PHOTO = os.environ.get("WELCOME_PHOTO", "https://unsplash.com") 
-WELCOME_AUDIO = os.environ.get("WELCOME_AUDIO", "https://soundhelix.com") 
-DEV_AUDIO = os.environ.get("DEV_AUDIO", "https://soundhelix.com") 
+# We set up bot and storage in RAM in order to save user states
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+logging.basicConfig(level=logging.INFO)
 
-app = Client("controller_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# دالة التحقق من الإشتراك الإجباري
-async def check_sub(client: Client, message: Message):
-    # إزالة الـ @ إذا وجدت لتجنب أخطاء الرابط
-    clean_username = CHANNEL_USERNAME.replace("@", "")
+# The states of user interaction we need
+class SetEvent(StatesGroup):
+    waiting_for_eventnum = State()
+    waiting_for_event_name = State()
+    waiting_for_event_time = State()
+    waiting_for_event_weekday = State()
+    waiting_for_event_location = State()
+    waiting_for_event_extra = State()
+    finishing_up = State()
+
+
+async def display_main_menu(message: types.Message):
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    buttons = [
+        types.InlineKeyboardButton(text="Display my events", callback_data="display"),
+        types.InlineKeyboardButton(text="Add an event", callback_data="add_custom")
+    ]
+    keyboard.add(*buttons)
+    await message.edit_text(text="Please choose an option:", reply_markup=keyboard)
+
+
+# Handler for command /start (start of conversation with user)
+@dp.message_handler(commands="start")
+async def cmd_start(message: types.Message):
+    # Check if we already have a file for this user
+    for file in listdir("users"):
+        if file.startswith(str(message.from_user.id)):
+            await message.answer("You already have an account")
+            break
+    else:  # if doesnt break above
+        # We create a file for user where we will store all information we need
+        data = {
+            "user_id": message.from_user.id,
+            "records": 0,
+            "events": []
+        }
+        dump_data(user_data=data)
+
+        print("New user: " + message.from_user.username)
+
+        # We create inline keyboard and buttons which will trigger our callbacks
+        # handlers
+        keyboard = types.InlineKeyboardMarkup()
+        buttons = [
+            types.InlineKeyboardButton(text="Create recommended schedule", callback_data="add_recommended"),
+            types.InlineKeyboardButton(text="Create custom Schedule", callback_data="add_custom")
+        ]
+        keyboard.add(*buttons)
+
+        await message.answer(text="Please choose an option....", reply_markup=keyboard)
+
+
+@dp.callback_query_handler(text="add_recommended")
+async def add_recommended(call: types.CallbackQuery):
+    await call.message.answer(text="Recommended events have been added to your schedule!")
+    await display_main_menu(call.message)
+    await call.answer()
+
+
+@dp.callback_query_handler(text="add_custom")
+async def add_custom(call: types.CallbackQuery):
+    # We open a user file and check that he hasnt exceeded the limit for records
+    user_data = load_data(call.from_user.id)
+    # we restrict amount of records user can have so that he doesn't abuse the bot
+    # might be a good idea to implement VIP users????
+    if user_data["records"] >= 8:
+        print(call.from_user.username + " is trying to overcome the limit")
+        await call.message.answer(text="You can't create more records!")
+        sleep(0.5)
+        await display_main_menu(call.message)
+    else:
+        print(call.from_user.username + " is creating new event")
+        await SetEvent.waiting_for_event_name.set()
+        await call.message.answer(text="Please input the name of the event:")
+
+    # This coroutine is necessarily to let Telegram servers know that we have processed
+    # the callback query
+    await call.answer()
+
+
+@dp.message_handler(state=SetEvent.waiting_for_event_name, content_types=types.ContentTypes.TEXT)
+async def get_event_name(message: types.Message, state: FSMContext):
+    # We store all users input into memory to later write it to user file
+    # (the data from "state" is stored as a dictionary)
+    await state.update_data(event_name=message.text)
+    await message.answer(text="Please input the time when event occurs in following format:\nHH:MM (24-hour standart)")
+    await SetEvent.next()
+
+
+@dp.message_handler(state=SetEvent.waiting_for_event_time, content_types=types.ContentTypes.TEXT)
+async def get_event_time(message: types.Message, state: FSMContext):
+    # We use "time" module to process users input
+    # if user gave us incorrect input we ask him to try again
+    # ("ValueError" is raised by time.strptime() function when it cant process the arguments)
     try:
-        await client.get_chat_member(CHANNEL_USERNAME, message.from_user.id)
-        return True
-    except UserNotParticipant:
-        btn = InlineKeyboardMarkup([[
-            InlineKeyboardButton("اضغط هنا للإشتراك بالقناة 📢", url=f"https://t.me/{clean_username}"),
-            InlineKeyboardButton("تحقق من الإشتراك 🔄", callback_data="check_again")
-        ]])
-        await message.reply_text(
-            f"⚠️ عذراً عزيزي {message.from_user.mention}، يجب عليك الإشتراك في القناة أولاً لتتمكن من استخدام البوت.",
-            reply_markup=btn
-        )
-        return False
-    except Exception:
-        # في حال وجود خطأ تقني (مثل البوت ليس مشرفاً) يتم السماح للمستخدم بالمرور
-        return True
-
-@app.on_message(filters.private & filters.command("start"))
-async def start_command(client: Client, message: Message):
-    if not await check_sub(client, message):
+        strptime(message.text, "%H:%M")
+    except ValueError:
+        await message.answer(text="Your input was incorrect, please try again")
+        await SetEvent.waiting_for_event_time.set()
         return
-        
-    main_buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إنشاء منشور جديد", callback_data="create_post"),
-         InlineKeyboardButton("📢 عرض القنوات", callback_data="view_channels")],
-        [InlineKeyboardButton("👨‍💻 مطور البوت", callback_data="dev_info")]
-    ])
-    
-    await client.send_photo(
-        chat_id=message.chat.id, 
-        photo=WELCOME_PHOTO, 
-        caption=f"👋 أهلاً بك يا {message.from_user.mention} في بوت التحكم بالمنشورات.\n\n🤖 يمكنك إدارة قنواتك وصنع منشورات احترافية بأزرار شفافة.", 
-        reply_markup=main_buttons
-    )
-    
-    await client.send_audio(
-        chat_id=message.chat.id, 
-        audio=WELCOME_AUDIO, 
-        caption="🎵 نغمة الترحيب"
-    )
+    await state.update_data(event_time=message.text)
+    await message.answer(text="Please input the full name of the day of the week the event is going to occur:")
+    await SetEvent.next()
 
-@app.on_callback_query()
-async def callback_handler(client: Client, query):
-    user_id = query.from_user.id
-    
-    if query.data == "check_again":
-        try:
-            await client.get_chat_member(CHANNEL_USERNAME, user_id)
-            await query.answer("✅ تم التحقق من الإشتراك!", show_alert=True)
-            await query.message.delete()
-            # استدعاء Start مجدداً كرسالة وهمية
-            from pyrogram.types import User, Chat
-            fake_msg = query.message
-            fake_msg.from_user = query.from_user
-            await start_command(client, fake_msg)
-        except UserNotParticipant:
-            await query.answer("❌ لم تشترك بعد!", show_alert=True)
+
+@dp.message_handler(state=SetEvent.waiting_for_event_weekday, content_types=types.ContentTypes.TEXT)
+async def get_event_weekday(message: types.Message, state: FSMContext):
+    # Here we do the same process as for time
+    try:
+        strptime(message.text, "%A")
+    except ValueError:
+        await message.answer(text="Your input was incorrect, please try again")
+        await SetEvent.waiting_for_event_weekday.set()
         return
+    await state.update_data(event_wday=message.text)
+    await message.answer(text="Please input the location of the event")
+    await SetEvent.next()
 
-    if query.data == "view_channels":
-        channels_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 العودة", callback_data="back_main")]])
-        await query.message.edit_caption(
-            caption=f"📢 **القنوات المتصلة:**\n\n1️⃣ القناة الإجبارية: @{CHANNEL_USERNAME}\n💡 لإضافة قنوات، ارفع البوت مشرفاً ووجه رسالة منها.", 
-            reply_markup=channels_btn
-        )
 
-    elif query.data == "dev_info":
-        dev_btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 تواصل مع المطور", url=f"tg://user?id={DEVELOPER_ID}")],
-            [InlineKeyboardButton("🔙 العودة", callback_data="back_main")]
-        ])
-        await query.message.edit_caption(
-            caption=f"📋 **بطاقة المطور:**\n\n🆔 الآيدي: `{DEVELOPER_ID}`\n🛠️ اللغة: Python (Pyrogram)", 
-            reply_markup=dev_btn
-        )
-        await client.send_audio(chat_id=query.message.chat.id, audio=DEV_AUDIO)
+@dp.message_handler(state=SetEvent.waiting_for_event_location, content_types=types.ContentTypes.TEXT)
+async def get_event_time(message: types.Message, state: FSMContext):
+    await state.update_data(event_location=message.text)
+    await message.answer(text="Additional information:")
+    await SetEvent.next()
 
-    elif query.data == "back_main":
-        main_buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ إنشاء منشور جديد", callback_data="create_post"), 
-             InlineKeyboardButton("📢 عرض القنوات", callback_data="view_channels")],
-            [InlineKeyboardButton("👨‍💻 مطور البوت", callback_data="dev_info")]
-        ])
-        await query.message.edit_caption(
-            caption="👋 أهلاً بك مجدداً في قائمة التحكم.\n🤖 اختر ما تريد القيام به:", 
-            reply_markup=main_buttons
-        )
 
-    elif query.data == "create_post":
-        back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 العودة", callback_data="back_main")]])
-        await query.message.edit_caption(
-            caption="📝 أرسل الآن نص المنشور الذي تريد إنشائه:", 
-            reply_markup=back_btn
-        )
+@dp.message_handler(state=SetEvent.waiting_for_event_extra, content_types=types.ContentTypes.TEXT)
+async def get_event_time(message: types.Message, state: FSMContext):
+    # We ask user for the final piece of data
+    # Then via inline keyboard callback handler is called which
+    # will either confirm the creation of the even and write it to the user file
+    # or will erase all the information we have gathered from user
+    await state.update_data(event_extra=message.text)
+    buttons = [
+        types.InlineKeyboardButton(text="Confirm", callback_data="create_event"),
+        types.InlineKeyboardButton(text="Cancel", callback_data="forget"),
+    ]
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard.add(*buttons)
+    await message.answer(text="Please confirm event creation:", reply_markup=keyboard)
+    await SetEvent.next()
+
+
+@dp.callback_query_handler(text="create_event", state=SetEvent.finishing_up)
+async def create_event(call: types.CallbackQuery, state: FSMContext):
+    event = await state.get_data()
+    await state.finish()
+    await state.reset_state()
+    user_data = load_data(call.from_user.id)
+    user_data["records"] += 1
+    user_data["events"].append({})
+    user_data["events"][user_data["records"] - 1] = event
+    user_data["events"][user_data["records"] - 1]["event_id"] = hash(call.from_user.id + int(event["event_time"][0:2]))
+    set_up_notification(chat_id=call.message.chat.id,
+                        event=user_data["events"][user_data["records"] - 1]
+                        )
+    user_data["events"][user_data["records"] - 1]["reminder_set"] = False
+    dump_data(user_data)
+    print(call.from_user.username + " have created new event")
+    await call.answer()
+    await display_main_menu(call.message)
+
+
+@dp.callback_query_handler(text="forget", state=SetEvent.finishing_up)
+async def forget_event(call: types.CallbackQuery, state: FSMContext):
+    print(call.from_user.username + " have canceled event creation")
+    await state.finish()
+    await state.reset_state()
+    await call.answer()
+    await display_main_menu(call.message)
+
+
+# We Display users events as buttons on which he can click to see an event details!
+@dp.callback_query_handler(text="display")
+async def display_events(call: types.CallbackQuery):
+    user_data = load_data(call.from_user.id)
+    buttons = []
+    n_records = user_data["records"]
+    for i in range(n_records):
+        event = user_data["events"][i]
+        buttons.append(types.InlineKeyboardButton(text=event["event_name"], callback_data=("disp_" + str(i))))
+    button = types.InlineKeyboardButton(text="<< Back", callback_data="main_menu")
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(*buttons)
+    keyboard.row(button)
+    await call.answer()
+    await call.message.edit_text(text="Please choose an even to view", reply_markup=keyboard)
+
+
+# Shows user a details of the event he cliked on
+@dp.callback_query_handler(Text(startswith="disp_"))
+async def show_event(call: types.CallbackQuery):
+    event_num = int(call.data.split("_")[1])
+    user_data = load_data(call.from_user.id)
+    event = user_data["events"][event_num]
+    # we user html <b> tag to make text bold
+    event_output = generate_event_text(event)
+    buttons = [
+        types.InlineKeyboardButton(text="<< Back", callback_data="main_menu"),
+        types.InlineKeyboardButton(text="Delete", callback_data=("del_" + str(event_num)))
+    ]
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(*buttons)
+    await call.answer()
+    await call.message.edit_text(text=event_output, parse_mode=types.ParseMode.HTML, reply_markup=keyboard)
+
+
+@dp.callback_query_handler(text="main_menu")
+async def show_main_menu(call: types.CallbackQuery):
+    await call.answer()
+    await display_main_menu(call.message)
+
+
+@dp.callback_query_handler(Text(startswith="del_"))
+async def delete_event(call: types.CallbackQuery):
+    event_num = int(call.data.split("_")[1])
+    user_data = load_data(call.from_user.id)
+    delete_notification(event_id=user_data["events"][event_num]["event_id"])
+    user_data["events"].pop(event_num)
+    user_data["records"] -= 1
+    dump_data(user_data)
+    print(call.from_user.username + " have deleted event")
+    await call.answer()
+    await display_main_menu(call.message)
 
 if __name__ == "__main__":
-    print("⚡ البوت يعمل الآن...")
-    app.run()
+    executor.start_polling(dp, skip_updates=True)
+
         
