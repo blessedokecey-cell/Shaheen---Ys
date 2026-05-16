@@ -97,7 +97,7 @@ async def add_custom(call: types.CallbackQuery):
     await call.answer()
 
 
-@dp.message_handler(state=SetEvent.waiting_for_event_name, content_types=types.ContentTypes.TEXT)
+@dp.message(SetEvent.waiting_for_event_name)
 async def get_event_name(message: types.Message, state: FSMContext):
     # We store all users input into memory to later write it to user file
     # (the data from "state" is stored as a dictionary)
@@ -105,8 +105,7 @@ async def get_event_name(message: types.Message, state: FSMContext):
     await message.answer(text="Please input the time when event occurs in following format:\nHH:MM (24-hour standart)")
     await SetEvent.next()
 
-
-@dp.message_handler(state=SetEvent.waiting_for_event_time, content_types=types.ContentTypes.TEXT)
+@dp.message(SetEvent.waiting_for_event_time)
 async def get_event_time(message: types.Message, state: FSMContext):
     # We use "time" module to process users input
     # if user gave us incorrect input we ask him to try again
@@ -122,7 +121,7 @@ async def get_event_time(message: types.Message, state: FSMContext):
     await SetEvent.next()
 
 
-@dp.message_handler(state=SetEvent.waiting_for_event_weekday, content_types=types.ContentTypes.TEXT)
+@dp.message(SetEvent.waiting_for_event_weekday)
 async def get_event_weekday(message: types.Message, state: FSMContext):
     # Here we do the same process as for time
     try:
@@ -136,15 +135,16 @@ async def get_event_weekday(message: types.Message, state: FSMContext):
     await SetEvent.next()
 
 
-@dp.message_handler(state=SetEvent.waiting_for_event_location, content_types=types.ContentTypes.TEXT)
-async def get_event_time(message: types.Message, state: FSMContext):
+@dp.message(SetEvent.waiting_for_event_location)
+async def get_event_location(message: types.Message, state: FSMContext):
     await state.update_data(event_location=message.text)
     await message.answer(text="Additional information:")
     await SetEvent.next()
 
 
-@dp.message_handler(state=SetEvent.waiting_for_event_extra, content_types=types.ContentTypes.TEXT)
-async def get_event_time(message: types.Message, state: FSMContext):
+@dp.message(SetEvent.waiting_for_event_extra)
+async def get_event_extra(message: types.Message, state: FSMContext):
+
     # We ask user for the final piece of data
     # Then via inline keyboard callback handler is called which
     # will either confirm the creation of the even and write it to the user file
@@ -160,7 +160,7 @@ async def get_event_time(message: types.Message, state: FSMContext):
     await SetEvent.next()
 
 
-@dp.callback_query_handler(text="create_event", state=SetEvent.finishing_up)
+@dp.callback_query(SetEvent.finishing_up, lambda call: call.data == "create_event")
 async def create_event(call: types.CallbackQuery, state: FSMContext):
     event = await state.get_data()
     await state.finish()
@@ -180,7 +180,7 @@ async def create_event(call: types.CallbackQuery, state: FSMContext):
     await display_main_menu(call.message)
 
 
-@dp.callback_query_handler(text="forget", state=SetEvent.finishing_up)
+@dp.callback_query(SetEvent.finishing_up, lambda call: call.data == "forget")
 async def forget_event(call: types.CallbackQuery, state: FSMContext):
     print(call.from_user.username + " have canceled event creation")
     await state.finish()
@@ -190,7 +190,7 @@ async def forget_event(call: types.CallbackQuery, state: FSMContext):
 
 
 # We Display users events as buttons on which he can click to see an event details!
-@dp.callback_query_handler(text="display")
+@dp.callback_query(lambda call: call.data == "display")
 async def display_events(call: types.CallbackQuery):
     user_data = load_data(call.from_user.id)
     buttons = []
