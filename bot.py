@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.filters import Command
 from os import listdir
 from time import strptime, sleep
 from utility import generate_event_text, load_data, dump_data
@@ -37,8 +37,9 @@ async def display_main_menu(message: types.Message):
 
 
 # Handler for command /start (start of conversation with user)
-@dp.message_handler(commands="start")
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+
     # Check if we already have a file for this user
     for file in listdir("users"):
         if file.startswith(str(message.from_user.id)):
@@ -67,14 +68,14 @@ async def cmd_start(message: types.Message):
         await message.answer(text="Please choose an option....", reply_markup=keyboard)
 
 
-@dp.callback_query_handler(text="add_recommended")
+@dp.callback_query(lambda call: call.data == "add_recommended")
 async def add_recommended(call: types.CallbackQuery):
     await call.message.answer(text="Recommended events have been added to your schedule!")
     await display_main_menu(call.message)
     await call.answer()
 
 
-@dp.callback_query_handler(text="add_custom")
+@dp.callback_query(lambda call: call.data == "add_custom")
 async def add_custom(call: types.CallbackQuery):
     # We open a user file and check that he hasnt exceeded the limit for records
     user_data = load_data(call.from_user.id)
@@ -240,12 +241,31 @@ async def delete_event(call: types.CallbackQuery):
     await call.answer()
     await display_main_menu(call.message)
 
+from database import SchedulerDatabase
+from apscheduler.schedulers.asyncio import AsyncioScheduler
+
+db_manager = SchedulerDatabase()
+post_scheduler = AsyncioScheduler()
+
+async def check_and_publish_pending_posts():
+    """وظيفة تفحص المنشورات المجدولة وتصنع نشر تلقائي"""
+    pending_posts_list = db_manager.get_pending_posts()
+    for post in pending_posts_list:
+        db_post_id, target_channel, text_to_publish = post
+        try:
+            await bot.send_message(chat_id=target_channel, text=text_to_publish)
+            db_manager.mark_post_as_published(db_post_id)
+        except Exception:
+            pass
+
 async def main():
     logging.basicConfig(level=logging.INFO)
+    # تشغيل المنبه الذكي داخلياً كل 60 ثانية ليفحص ويقذف المنشورات
+    post_scheduler.add_job(check_and_publish_pending_posts, 'interval', seconds=60)
+    post_scheduler.start()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
         
