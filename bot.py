@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-from os import listdir
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -21,215 +20,217 @@ dp = Dispatcher(storage=storage)
 db_manager = SchedulerDatabase()
 post_scheduler = AsyncIOScheduler()
 
-class SetEvent(StatesGroup):
-    waiting_for_eventnum = State()
-    waiting_for_event_name = State()
-    waiting_for_event_time = State()
-    waiting_for_event_weekday = State()
-    waiting_for_event_location = State()
-    waiting_for_event_extra = State()
-    finishing_up = State()
+# آلة الحالات لمحاكاة مراحل ControllerBot
+class ControllerStates(StatesGroup):
+    waiting_for_channel_id = State()
+    waiting_for_post_content = State()
+    waiting_for_inline_buttons = State()
+    waiting_for_schedule_time = State()
 
-async def display_main_menu(message: types.Message):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="Display my events", callback_data="display"),
-            types.InlineKeyboardButton(text="Add an event", callback_data="add_custom")
-        ]
+# --- 📋 القوائم الرئيسية وهيكل الأزرار المطور ---
+
+def get_main_menu():
+    """القائمة الرئيسية الشبيهة بـ ControllerBot"""
+    return types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="📝 إنشاء منشور جديد", callback_data="create_post")],
+        [types.InlineKeyboardButton(text="📅 المنشورات المجدولة", callback_data="view_scheduled")],
+        [types.InlineKeyboardButton(text="📢 إدارة القنوات المرتبطة", callback_data="manage_channels")]
     ])
-    await message.edit_text(text="Please choose an option:", reply_markup=keyboard)
+
+def get_post_creation_menu():
+    """قائمة خيارات التعديل على المنشور قبل النشر"""
+    return types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="🔗 إضافة أزرار الرابط (URL)", callback_data="add_url_buttons")],
+        [types.InlineKeyboardButton(text="🚀 نشر الآن", callback_data="publish_now")],
+        [types.InlineKeyboardButton(text="⏱️ جدولة المنشور", callback_data="schedule_post")],
+        [types.InlineKeyboardButton(text="❌ إلغاء المنشور", callback_data="cancel_creation")]
+    ])
+
+# --- 🚀 معالجة الأوامر والوظائف التفاعلية ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    """أمر البدء وفتح لوحة التحكم الذكية"""
     if not os.path.exists("users"):
         os.makedirs("users")
+        
+    user_id_str = str(message.from_user.id)
+    with open(f"users/{user_id_str}.json", "w") as f:
+        f.write("{}")
 
-    for file in listdir("users"):
-        await message.answer("You already have an account", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="➕ إضافة منشور مجدول", callback_data="add_custom"),
-                types.InlineKeyboardButton(text="📋 عرض منشوراتي", callback_data="display")
-            ]
-        ]))
+    await message.answer(
+        text="🤖 **أهلاً بك في لوحة تحكم ControllerBot المطور!**\n\n"
+             "هذا البوت يتيح لك إدارة قنواتك، صناعة منشورات احترافية مزودة بأزرار روابط، وجدولتها للنشر التلقائي بكفاءة عالية.\n"
+             "يرجى اختيار أحد الأوامر من القائمة أدناه البدء:",
+        reply_markup=get_main_menu(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(lambda call: call.data == "manage_channels")
+async def manage_channels(call: types.CallbackQuery):
+    """عرض القنوات وإتاحة خيار الربط"""
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="➕ ربط قناة جديدة", callback_data="add_new_channel")],
+        [types.InlineKeyboardButton(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")]
+    ])
+    await call.message.edit_text(
+        text="📢 **إدارة القنوات المرتبطة:**\n\n"
+             "تأكد أولاً من رفع البوت كمسؤول (Admin) في قناتك مع صلاحية 'نشر الرسائل' ليعمل النظام بكفاءة حتمية.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "create_post")
+@dp.callback_query(lambda call: call.data == "add_new_channel")
+async def request_channel_id(call: types.CallbackQuery, state: FSMContext):
+    """طلب معرف القناة المستهدفة"""
+    await call.message.answer("📢 من فضلك قم بإرسال معرف القناة (مثال: `@MyChannel`):", parse_mode="Markdown")
+    await state.set_state(ControllerStates.waiting_for_channel_id)
+    await call.answer()
+
+@dp.message(ControllerStates.waiting_for_channel_id)
+async def process_channel_id(message: types.Message, state: FSMContext):
+    """حفظ القناة وطلب نص أو محتوى المنشور"""
+    channel_id = message.text.strip()
+    if not channel_id.startswith("@"):
+        await message.answer("❌ معرف القناة خاطئ! يجب أن يبدأ بالعلامة @")
         return
+    await state.update_data(target_channel=channel_id)
+    await message.answer("📝 **رائع! الآن أرسل محتوى المنشور الخاص بك:**\n(يدعم النصوص، التنسيق، الروابط المدمجة وغيرها)")
+    await state.set_state(ControllerStates.waiting_for_post_content)
 
-    else:
-        user_id_str = str(message.from_user.id)
-        data = {
-            "user_id": message.from_user.id,
-            "records": 0,
-            "events": []
-        }
-        try:
-            from utility import dump_data
-            dump_data(user_id_str, data)
-        except TypeError:
-            from utility import dump_data
-            dump_data(data)
-
-        print("New user: " + message.from_user.username)
-
-        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-            [
-                types.InlineKeyboardButton(text="Create recommended schedule", callback_data="add_recommended"),
-                types.InlineKeyboardButton(text="Create custom Schedule", callback_data="add_custom")
-            ]
-        ])
-        await message.answer(text="Please choose an option...", reply_markup=keyboard)
-
-@dp.callback_query(lambda call: call.data == "add_recommended")
-async def add_recommended(call: types.CallbackQuery):
-    await call.message.answer(text="Recommended events have been added to your schedule!")
-    await display_main_menu(call.message)
-    await call.answer()
-
-@dp.callback_query(lambda call: call.data == "add_custom")
-async def add_custom(call: types.CallbackQuery):
-    from utility import load_data
-    user_data = load_data(call.from_user.id)
-    if user_data["records"] >= 8:
-        print(call.from_user.username + " is trying to overcome the limit")
-        await call.message.answer(text="You can't create more records!")
-        await asyncio.sleep(0.5)
-        await display_main_menu(call.message)
-    else:
-        print(call.from_user.username + " is creating new event")
-        await SetEvent.waiting_for_event_name.set()
-        await call.message.answer(text="Please input the name of the event:")
-    await call.answer()
-
-@dp.message(SetEvent.waiting_for_event_name)
-async def get_event_name(message: types.Message, state: FSMContext):
-    await state.update_data(event_name=message.text)
-    await message.answer(text="Please input the time when event occurs in following format:\nHH:MM (24-hour standart):")
-    await SetEvent.waiting_for_event_time.set()
-
-@dp.message(SetEvent.waiting_for_event_time)
-async def get_event_time(message: types.Message, state: FSMContext):
-    await state.update_data(event_time=message.text)
-    await message.answer(text="Please input the weekday when event occurs (1-7 for Monday-Sunday):")
-    await SetEvent.waiting_for_event_weekday.set()
-
-@dp.message(SetEvent.waiting_for_event_weekday)
-async def get_event_weekday(message: types.Message, state: FSMContext):
-    await state.update_data(event_weekday=message.text)
-    await message.answer(text="Please input the location of the event:")
-    await SetEvent.waiting_for_event_location.set()
-
-@dp.message(SetEvent.waiting_for_event_location)
-async def get_event_location(message: types.Message, state: FSMContext):
-    await state.update_data(event_location=message.text)
-    await message.answer(text="Please input extra information or '-' if there is none:")
-    await SetEvent.waiting_for_event_extra.set()
-
-@dp.message(SetEvent.waiting_for_event_extra)
-async def get_event_extra(message: types.Message, state: FSMContext):
-    from utility import generate_event_text
-    await state.update_data(event_extra=message.text)
+@dp.message(ControllerStates.waiting_for_post_content)
+async def process_post_content(message: types.Message, state: FSMContext):
+    """عرض المنشور وفتح خيارات التعديل والنشر الشبيهة بـ ControllerBot"""
+    await state.update_data(post_text=message.text)
     user_data = await state.get_data()
-    text = generate_event_text(user_data["event_name"], user_data["event_time"], user_data["event_weekday"], user_data["event_location"], user_data["event_extra"])
     
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="Create an event", callback_data="create_event"),
-            types.InlineKeyboardButton(text="Forget", callback_data="forget")
-        ]
-    ])
-    await message.answer(text="Review your event:\n\n" + text, reply_markup=keyboard)
-    await SetEvent.finishing_up.set()
+    await message.answer(
+        text=f"👁️ **معاينة المنشور الموجه إلى ({user_data['target_channel']}):**\n\n{message.text}",
+        reply_markup=get_post_creation_menu(),
+        parse_mode="Markdown"
+    )
 
-@dp.callback_query(lambda call: call.data == "create_event")
-async def create_event(call: types.CallbackQuery, state: FSMContext):
-    from utility import load_data, dump_data
-    user_data = load_data(call.from_user.id)
-    event_data = await state.get_data()
-    
-    event_id = user_data["records"]
-    new_event = {
-        "id": event_id,
-        "name": event_data["event_name"],
-        "time": event_data["event_time"],
-        "weekday": event_data["event_weekday"],
-        "location": event_data["event_location"],
-        "extra": event_data["event_extra"]
-    }
-    
-    user_data["events"].append(new_event)
-    user_data["records"] += 1
-    
-    try: dump_data(str(call.from_user.id), user_data)
-    except TypeError: dump_data(user_data)
-    
-    await call.message.answer(text="Event has been successfully created!")
+@dp.callback_query(lambda call: call.data == "add_url_buttons")
+async def request_url_buttons(call: types.CallbackQuery, state: FSMContext):
+    """طلب إضافة أزرار الروابط التفاعلية أسفل المنشور"""
+    await call.message.answer(
+        text="🔗 **إضافة أزرار روابط للمنشور:**\n\n"
+             "يرجى إرسال الأزرار بالصيغة القياسية التالية:\n"
+             "`اسم الزر - رابط الزر`\n\n"
+             "مثال:\n"
+             "`تابعنا هنا - https://google.com`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(ControllerStates.waiting_for_inline_buttons)
+    await call.answer()
+
+@dp.message(ControllerStates.waiting_for_inline_buttons)
+async def process_inline_buttons(message: types.Message, state: FSMContext):
+    """معالجة الأزرار وصناعة المعاينة الجديدة للمنشور"""
+    try:
+        raw_text = message.text.strip()
+        if " - " not in raw_text:
+            await message.answer("❌ الصيغة خاطئة! يرجى إدخال: اسم الزر - الرابط")
+            return
+            
+        btn_name, btn_url = raw_text.split(" - ")
+        inline_kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text=btn_name.strip(), url=btn_url.strip())]
+        ])
+        
+        await state.update_data(has_buttons=True, btn_name=btn_name.strip(), btn_url=btn_url.strip())
+        user_data = await state.get_data()
+        
+        await message.answer(
+            text=f"👁️ **المعاينة النهائية للمنشور بالأزرار الروابط:**\n\n{user_data['post_text']}",
+            reply_markup=get_post_creation_menu(),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        await message.answer("❌ حدث خطأ أثناء فحص الرابط والتنسيق المرفق.")
+
+@dp.callback_query(lambda call: call.data == "publish_now")
+async def publish_now(call: types.CallbackQuery, state: FSMContext):
+    """النشر الفوري في القناة التلغرام"""
+    user_data = await state.get_data()
+    try:
+        reply_markup = None
+        if user_data.get("has_buttons"):
+            reply_markup = types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text=user_data["btn_name"], url=user_data["btn_url"])]
+            ])
+            
+        await bot.send_message(chat_id=user_data['target_channel'], text=user_data['post_text'], reply_markup=reply_markup, parse_mode="Markdown")
+        await call.message.answer("🚀 **تم نشر المنشور الخاص بك في القناة بنجاح واحترافية تامة!**")
+        await state.clear()
+    except Exception as e:
+        await call.message.answer(f"❌ فشل النشر! تأكد من وجود البوت كأدمن في القناة المرتبطة. الخطأ: {e}")
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "schedule_post")
+async def request_schedule_time(call: types.CallbackQuery, state: FSMContext):
+    """طلب تحديد وقت وتاريخ الجدولة"""
+    await call.message.answer(
+        text="⏱️ **جدولة وقت النشر التلقائي:**\n\n"
+             "يرجى إرسال التوقيت بصيغة النظام القياسية التالية:\n"
+             "`YYYY-MM-DD HH:MM:SS`\n\n"
+             "مثال:\n"
+             "`2026-06-15 14:30:00`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(ControllerStates.waiting_for_schedule_time)
+    await call.answer()
+
+@dp.message(ControllerStates.waiting_for_schedule_time)
+async def process_schedule_time(message: types.Message, state: FSMContext):
+    """حفظ المنشور المجدول في قاعدة البيانات الذكية"""
+    try:
+        raw_time = message.text.strip()
+        parsed_datetime = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S")
+        
+        if parsed_datetime <= datetime.now():
+            await message.answer("❌ خطأ: الوقت المحدد يجب أن يكون في المستقبل!")
+            return
+            
+        user_data = await state.get_data()
+        
+        # تخزين البيانات في الجداول لقذفها تلقائياً بالخلفية
+        db_manager.add_scheduled_post(
+            channel_id=user_data['target_channel'],
+            post_text=user_data['post_text'],
+            scheduled_time=parsed_datetime
+        )
+        
+        await message.answer(f"✅ **تمت الجدولة بنجاح على طريقة ControllerBot!**\n⏳ سيتم النشر التلقائي في: {raw_time}")
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ صيغة الوقت خاطئة! تأكد من مطابقتها للمثال المعروض تماماً.")
+
+@dp.callback_query(lambda call: call.data == "view_scheduled")
+async def view_scheduled(call: types.CallbackQuery):
+    """استعراض حالة نظام الفحص والجدولة"""
+    await call.message.answer("📊 **نظام الجدولة الذاتي مفعّل ويعمل في الخلفية لمراقبة المنشورات القادمة.**")
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "cancel_creation")
+@dp.callback_query(lambda call: call.data == "back_to_main")
+async def cancel_and_return(call: types.CallbackQuery, state: FSMContext):
+    """إلغاء العمليات الحالية والعودة للقائمة الرئيسية"""
     await state.clear()
-    await display_main_menu(call.message)
+    await call.message.edit_text(text="🤖 لوحة التحكم الرئيسية لـ ControllerBot مفعّلة وجاهزة لخدمتك:", reply_markup=get_main_menu())
     await call.answer()
 
-@dp.callback_query(lambda call: call.data == "forget")
-async def forget(call: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.answer(text="Event creation has been canceled.")
-    await display_main_menu(call.message)
-    await call.answer()
-
-@dp.callback_query(lambda call: call.data == "display")
-async def display_events(call: types.CallbackQuery):
-    from utility import load_data
-    user_data = load_data(call.from_user.id)
-    buttons = []
-    n_records = user_data["records"]
-    for i in range(n_records):
-        event = user_data["events"][i]
-        buttons.append([types.InlineKeyboardButton(text=event["name"], callback_data=f"disp_{i}")])
-    
-    buttons.append([types.InlineKeyboardButton(text="<< Back", callback_data="main_menu")])
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
-    await call.message.edit_text(text="Please choose an event to view:", reply_markup=keyboard)
-    await call.answer()
-
-@dp.callback_query(lambda call: call.data.startswith("disp_"))
-async def show_event(call: types.CallbackQuery):
-    from utility import load_data, generate_event_text
-    event_num = int(call.data.split("_")[1])
-    user_data = load_data(call.from_user.id)
-    event = user_data["events"][event_num]
-    event_output = generate_event_text(event["name"], event["time"], event["weekday"], event["location"], event["extra"])
-    
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="<< Back", callback_data="display"),
-            types.InlineKeyboardButton(text="Delete", callback_data=f"del_{event_num}")
-        ]
-    ])
-    await call.message.edit_text(text=event_output, reply_markup=keyboard)
-    await call.answer()
-
-@dp.callback_query(lambda call: call.data == "main_menu")
-async def show_main_menu(call: types.CallbackQuery):
-    await display_main_menu(call.message)
-    await call.answer()
-
-@dp.callback_query(lambda call: call.data.startswith("del_"))
-async def delete_event(call: types.CallbackQuery):
-    from utility import load_data, dump_data
-    event_num = int(call.data.split("_")[1])
-    user_data = load_data(call.from_user.id)
-    user_data["events"].pop(event_num)
-    user_data["records"] -= 1
-    
-    try: dump_data(str(call.from_user.id), user_data)
-    except TypeError: dump_data(user_data)
-    
-    await call.message.answer(text="You have deleted the event.")
-    await display_main_menu(call.message)
-    await call.answer()
+# --- ⏱️ محرك الجدولة التلقائي بالخلفية ---
 
 async def check_and_publish_pending_posts():
-    pending_posts_list = db_manager.get_pending_posts()
-    for post in pending_posts_list:
+    """فحص قاعدة البيانات كل 60 ثانية وإطلاق المنشورات المستحقة تلقائياً"""
+    pending_posts = db_manager.get_pending_posts()
+    for post in pending_posts:
         db_post_id, target_channel, text_to_publish = post
         try:
-            await bot.send_message(chat_id=target_channel, text=text_to_publish)
+            await bot.send_message(chat_id=target_channel, text=text_to_publish, parse_mode="Markdown")
             db_manager.mark_post_as_published(db_post_id)
         except Exception:
             pass
@@ -241,3 +242,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
