@@ -55,7 +55,7 @@ async def cmd_start(message: types.Message):
             "records": 0,
             "events": []
         }
-        dump_data(data)
+        dump_data(user_id_str, data)
         print("New user: " + message.from_user.username)
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
