@@ -2,19 +2,24 @@ import asyncio
 import logging
 import os
 from os import listdir
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
-from utility import generate_event_text, load_data, dump_data
-
-# تهيئة البوت والموزع المتوافق مع الإصدار الحديث
-bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from database import SchedulerDatabase
 
 logging.basicConfig(level=logging.INFO)
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+db_manager = SchedulerDatabase()
+post_scheduler = AsyncIOScheduler()
 
 class SetEvent(StatesGroup):
     waiting_for_eventnum = State()
@@ -55,9 +60,13 @@ async def cmd_start(message: types.Message):
             "records": 0,
             "events": []
         }
-        try: dump_data(user_id_str, data)
-        except TypeError: dump_data(data)
-            
+        try:
+            from utility import dump_data
+            dump_data(user_id_str, data)
+        except TypeError:
+            from utility import dump_data
+            dump_data(data)
+
         print("New user: " + message.from_user.username)
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -76,6 +85,7 @@ async def add_recommended(call: types.CallbackQuery):
 
 @dp.callback_query(lambda call: call.data == "add_custom")
 async def add_custom(call: types.CallbackQuery):
+    from utility import load_data
     user_data = load_data(call.from_user.id)
     if user_data["records"] >= 8:
         print(call.from_user.username + " is trying to overcome the limit")
@@ -91,154 +101,130 @@ async def add_custom(call: types.CallbackQuery):
 @dp.message(SetEvent.waiting_for_event_name)
 async def get_event_name(message: types.Message, state: FSMContext):
     await state.update_data(event_name=message.text)
-    await message.answer(text="Please input the time when event occurs in following format:\\nHH:MM (24-hour standart):")
-    await SetEvent.next()
+    await message.answer(text="Please input the time when event occurs in following format:\nHH:MM (24-hour standart):")
+    await SetEvent.waiting_for_event_time.set()
 
 @dp.message(SetEvent.waiting_for_event_time)
 async def get_event_time(message: types.Message, state: FSMContext):
-    # We use "time" module to process users input
-    # if user gave us incorrect input we ask him to try again
-    # ("ValueError" is raised by time.strptime() function when it cant process the arguments)
-    try:
-        strptime(message.text, "%H:%M")
-    except ValueError:
-        await message.answer(text="Your input was incorrect, please try again")
-        await SetEvent.waiting_for_event_time.set()
-        return
     await state.update_data(event_time=message.text)
-    await message.answer(text="Please input the full name of the day of the week the event is going to occur:")
-    await SetEvent.next()
-
+    await message.answer(text="Please input the weekday when event occurs (1-7 for Monday-Sunday):")
+    await SetEvent.waiting_for_event_weekday.set()
 
 @dp.message(SetEvent.waiting_for_event_weekday)
 async def get_event_weekday(message: types.Message, state: FSMContext):
-    # Here we do the same process as for time
-    try:
-        strptime(message.text, "%A")
-    except ValueError:
-        await message.answer(text="Your input was incorrect, please try again")
-        await SetEvent.waiting_for_event_weekday.set()
-        return
-    await state.update_data(event_wday=message.text)
-    await message.answer(text="Please input the location of the event")
-    await SetEvent.next()
-
+    await state.update_data(event_weekday=message.text)
+    await message.answer(text="Please input the location of the event:")
+    await SetEvent.waiting_for_event_location.set()
 
 @dp.message(SetEvent.waiting_for_event_location)
 async def get_event_location(message: types.Message, state: FSMContext):
     await state.update_data(event_location=message.text)
-    await message.answer(text="Additional information:")
-    await SetEvent.next()
-
+    await message.answer(text="Please input extra information or '-' if there is none:")
+    await SetEvent.waiting_for_event_extra.set()
 
 @dp.message(SetEvent.waiting_for_event_extra)
 async def get_event_extra(message: types.Message, state: FSMContext):
-
-    # We ask user for the final piece of data
-    # Then via inline keyboard callback handler is called which
-    # will either confirm the creation of the even and write it to the user file
-    # or will erase all the information we have gathered from user
+    from utility import generate_event_text
     await state.update_data(event_extra=message.text)
-    buttons = [
-        types.InlineKeyboardButton(text="Confirm", callback_data="create_event"),
-        types.InlineKeyboardButton(text="Cancel", callback_data="forget"),
-    ]
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(*buttons)
-    await message.answer(text="Please confirm event creation:", reply_markup=keyboard)
-    await SetEvent.next()
+    user_data = await state.get_data()
+    text = generate_event_text(user_data["event_name"], user_data["event_time"], user_data["event_weekday"], user_data["event_location"], user_data["event_extra"])
+    
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="Create an event", callback_data="create_event"),
+            types.InlineKeyboardButton(text="Forget", callback_data="forget")
+        ]
+    ])
+    await message.answer(text="Review your event:\n\n" + text, reply_markup=keyboard)
+    await SetEvent.finishing_up.set()
 
-
-@dp.callback_query(SetEvent.finishing_up, lambda call: call.data == "create_event")
+@dp.callback_query(lambda call: call.data == "create_event")
 async def create_event(call: types.CallbackQuery, state: FSMContext):
-    event = await state.get_data()
-    await state.finish()
-    await state.reset_state()
+    from utility import load_data, dump_data
     user_data = load_data(call.from_user.id)
+    event_data = await state.get_data()
+    
+    event_id = user_data["records"]
+    new_event = {
+        "id": event_id,
+        "name": event_data["event_name"],
+        "time": event_data["event_time"],
+        "weekday": event_data["event_weekday"],
+        "location": event_data["event_location"],
+        "extra": event_data["event_extra"]
+    }
+    
+    user_data["events"].append(new_event)
     user_data["records"] += 1
-    user_data["events"].append({})
-    user_data["events"][user_data["records"] - 1] = event
-    user_data["events"][user_data["records"] - 1]["event_id"] = hash(call.from_user.id + int(event["event_time"][0:2]))
-    set_up_notification(chat_id=call.message.chat.id,
-                        event=user_data["events"][user_data["records"] - 1]
-                        )
-    user_data["events"][user_data["records"] - 1]["reminder_set"] = False
-    dump_data(user_data)
-    print(call.from_user.username + " have created new event")
-    await call.answer()
+    
+    try: dump_data(str(call.from_user.id), user_data)
+    except TypeError: dump_data(user_data)
+    
+    await call.message.answer(text="Event has been successfully created!")
+    await state.clear()
     await display_main_menu(call.message)
-
-
-@dp.callback_query(SetEvent.finishing_up, lambda call: call.data == "forget")
-async def forget_event(call: types.CallbackQuery, state: FSMContext):
-    print(call.from_user.username + " have canceled event creation")
-    await state.finish()
-    await state.reset_state()
     await call.answer()
+
+@dp.callback_query(lambda call: call.data == "forget")
+async def forget(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.answer(text="Event creation has been canceled.")
     await display_main_menu(call.message)
+    await call.answer()
 
-
-# We Display users events as buttons on which he can click to see an event details!
 @dp.callback_query(lambda call: call.data == "display")
 async def display_events(call: types.CallbackQuery):
+    from utility import load_data
     user_data = load_data(call.from_user.id)
     buttons = []
     n_records = user_data["records"]
     for i in range(n_records):
         event = user_data["events"][i]
-        buttons.append(types.InlineKeyboardButton(text=event["event_name"], callback_data=("disp_" + str(i))))
-    button = types.InlineKeyboardButton(text="<< Back", callback_data="main_menu")
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(*buttons)
-    keyboard.row(button)
+        buttons.append([types.InlineKeyboardButton(text=event["name"], callback_data=f"disp_{i}")])
+    
+    buttons.append([types.InlineKeyboardButton(text="<< Back", callback_data="main_menu")])
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    await call.message.edit_text(text="Please choose an event to view:", reply_markup=keyboard)
     await call.answer()
-    await call.message.edit_text(text="Please choose an even to view", reply_markup=keyboard)
 
-
-# Shows user a details of the event he cliked on
 @dp.callback_query(lambda call: call.data.startswith("disp_"))
 async def show_event(call: types.CallbackQuery):
+    from utility import load_data, generate_event_text
     event_num = int(call.data.split("_")[1])
     user_data = load_data(call.from_user.id)
     event = user_data["events"][event_num]
-    # we user html <b> tag to make text bold
-    event_output = generate_event_text(event)
-    buttons = [
-        types.InlineKeyboardButton(text="<< Back", callback_data="main_menu"),
-        types.InlineKeyboardButton(text="Delete", callback_data=("del_" + str(event_num)))
-    ]
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(*buttons)
+    event_output = generate_event_text(event["name"], event["time"], event["weekday"], event["location"], event["extra"])
+    
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="<< Back", callback_data="display"),
+            types.InlineKeyboardButton(text="Delete", callback_data=f"del_{event_num}")
+        ]
+    ])
+    await call.message.edit_text(text=event_output, reply_markup=keyboard)
     await call.answer()
-    await call.message.edit_text(text=event_output, parse_mode=types.ParseMode.HTML, reply_markup=keyboard)
-
 
 @dp.callback_query(lambda call: call.data == "main_menu")
 async def show_main_menu(call: types.CallbackQuery):
-    await call.answer()
     await display_main_menu(call.message)
-
+    await call.answer()
 
 @dp.callback_query(lambda call: call.data.startswith("del_"))
 async def delete_event(call: types.CallbackQuery):
+    from utility import load_data, dump_data
     event_num = int(call.data.split("_")[1])
     user_data = load_data(call.from_user.id)
-    delete_notification(event_id=user_data["events"][event_num]["event_id"])
     user_data["events"].pop(event_num)
     user_data["records"] -= 1
-    dump_data(user_data)
-    print(call.from_user.username + " have deleted event")
-    await call.answer()
+    
+    try: dump_data(str(call.from_user.id), user_data)
+    except TypeError: dump_data(user_data)
+    
+    await call.message.answer(text="You have deleted the event.")
     await display_main_menu(call.message)
-
-from database import SchedulerDatabase
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-db_manager = SchedulerDatabase()
-post_scheduler = AsyncIOScheduler()
+    await call.answer()
 
 async def check_and_publish_pending_posts():
-    """وظيفة تفحص المنشورات المجدولة وتصنع نشر تلقائي"""
     pending_posts_list = db_manager.get_pending_posts()
     for post in pending_posts_list:
         db_post_id, target_channel, text_to_publish = post
@@ -249,13 +235,9 @@ async def check_and_publish_pending_posts():
             pass
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
-    # تشغيل المنبه الذكي داخلياً كل 60 ثانية ليفحص ويقذف المنشورات
     post_scheduler.add_job(check_and_publish_pending_posts, 'interval', seconds=60)
     post_scheduler.start()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-        
