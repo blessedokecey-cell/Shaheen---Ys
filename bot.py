@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
-from os import listdir
+from aiogram.fsm.state import State, StatesGroup
 from time import strptime, sleep
 from utility import generate_event_text, load_data, dump_data
 import os
