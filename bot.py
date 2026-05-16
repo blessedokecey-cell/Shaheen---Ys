@@ -9,15 +9,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 from utility import generate_event_text, load_data, dump_data
 
-# تهيئة البوت والموزع المتوافق مع الإصدار الحديث مرة واحدة فقط
+# تهيئة البوت والموزع المتوافق مع الإصدار الحديث
 bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 logging.basicConfig(level=logging.INFO)
 
-
-# The states of user interaction we need
 class SetEvent(StatesGroup):
     waiting_for_eventnum = State()
     waiting_for_event_name = State()
@@ -27,53 +25,46 @@ class SetEvent(StatesGroup):
     waiting_for_event_extra = State()
     finishing_up = State()
 
-
 async def display_main_menu(message: types.Message):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    buttons = [
-        types.InlineKeyboardButton(text="Display my events", callback_data="display"),
-        types.InlineKeyboardButton(text="Add an event", callback_data="add_custom")
-    ]
-    keyboard.add(*buttons)
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [
+            types.InlineKeyboardButton(text="Display my events", callback_data="display"),
+            types.InlineKeyboardButton(text="Add an event", callback_data="add_custom")
+        ]
+    ])
     await message.edit_text(text="Please choose an option:", reply_markup=keyboard)
 
-
-# Handler for command /start (start of conversation with user)
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-
-    # Check if we already have a file for this user
     if not os.path.exists("users"):
         os.makedirs("users")
 
-                for file in listdir("users"):
-         await message.answer("You already have an account", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-                ]))
+    for file in listdir("users"):
+        await message.answer("You already have an account", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="➕ إضافة منشور مجدول", callback_data="add_custom"),
+                types.InlineKeyboardButton(text="📋 عرض منشوراتي", callback_data="display")
+            ]
+        ]))
         return
-        
 
-    else:  # if doesnt break above
-        # We create a file for user where we will store all information we need
+    else:
+        user_id_str = str(message.from_user.id)
         data = {
             "user_id": message.from_user.id,
             "records": 0,
             "events": []
         }
-        dump_data(user_data=data)
-
+        dump_data(user_id_str, data)
         print("New user: " + message.from_user.username)
 
-        # We create inline keyboard and buttons which will trigger our callbacks
-        # handlers
-        keyboard = types.InlineKeyboardMarkup()
-        buttons = [
-            types.InlineKeyboardButton(text="Create recommended schedule", callback_data="add_recommended"),
-            types.InlineKeyboardButton(text="Create custom Schedule", callback_data="add_custom")
-        ]
-        keyboard.add(*buttons)
-
-        await message.answer(text="Please choose an option....", reply_markup=keyboard)
-
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="Create recommended schedule", callback_data="add_recommended"),
+                types.InlineKeyboardButton(text="Create custom Schedule", callback_data="add_custom")
+            ]
+        ])
+        await message.answer(text="Please choose an option...", reply_markup=keyboard)
 
 @dp.callback_query(lambda call: call.data == "add_recommended")
 async def add_recommended(call: types.CallbackQuery):
@@ -81,34 +72,24 @@ async def add_recommended(call: types.CallbackQuery):
     await display_main_menu(call.message)
     await call.answer()
 
-
 @dp.callback_query(lambda call: call.data == "add_custom")
 async def add_custom(call: types.CallbackQuery):
-    # We open a user file and check that he hasnt exceeded the limit for records
     user_data = load_data(call.from_user.id)
-    # we restrict amount of records user can have so that he doesn't abuse the bot
-    # might be a good idea to implement VIP users????
     if user_data["records"] >= 8:
         print(call.from_user.username + " is trying to overcome the limit")
         await call.message.answer(text="You can't create more records!")
-        sleep(0.5)
+        await asyncio.sleep(0.5)
         await display_main_menu(call.message)
     else:
         print(call.from_user.username + " is creating new event")
         await SetEvent.waiting_for_event_name.set()
         await call.message.answer(text="Please input the name of the event:")
-
-    # This coroutine is necessarily to let Telegram servers know that we have processed
-    # the callback query
     await call.answer()
-
 
 @dp.message(SetEvent.waiting_for_event_name)
 async def get_event_name(message: types.Message, state: FSMContext):
-    # We store all users input into memory to later write it to user file
-    # (the data from "state" is stored as a dictionary)
     await state.update_data(event_name=message.text)
-    await message.answer(text="Please input the time when event occurs in following format:\nHH:MM (24-hour standart)")
+    await message.answer(text="Please input the time when event occurs in following format:\\nHH:MM (24-hour standart):")
     await SetEvent.next()
 
 @dp.message(SetEvent.waiting_for_event_time)
