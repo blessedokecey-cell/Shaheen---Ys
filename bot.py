@@ -47,8 +47,13 @@ async def cmd_start(message: types.Message):
         os.makedirs("users")
 
     for file in listdir("users"):
-            await message.answer("You already have an account")
-            break
+                    await message.answer("You already have an account", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="➕ إضافة منشور مجدول", callback_query_data="add_custom"),
+                types.InlineKeyboardButton(text="📋 عرض منشوراتي", callback_query_data="display")
+            ]
+        ]))
+        break
     else:  # if doesnt break above
         # We create a file for user where we will store all information we need
         data = {
