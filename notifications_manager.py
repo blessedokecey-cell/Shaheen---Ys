@@ -12,13 +12,14 @@ logging.basicConfig(level=logging.INFO)
 
 DELAY = -30
 
-    my_cron = CronTab(user="your_user_name")
-    command_at = 'python3 /home/zavid/Scheduler_Bot/sender.py {0!s} \'{1!s}\''.format(chat_id, text)
-    job = my_cron.new(command=command_at, comment=str(event_id))
-    job.enable()
-    time = time.split(":")
-    job.setall(time[1] + " " + time[0] + " * * " + wday)
-    my_cron.write()
+my_cron = CronTab(user="your_user_name")
+command_at = 'python3 /home/zavid/Scheduler_Bot/sender.py {0} \'{1}\''.format(event_id, text)
+job = my_cron.new(command=command_at, comment=str(event_id))
+job.enable()
+time_parts = time.split(":")
+job.setall(time_parts[1] + " " + time_parts[0] + " * * " + wday)
+my_cron.write()
+
 
 
 def set_up_notification(chat_id: int, event: dict):
