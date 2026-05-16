@@ -43,8 +43,10 @@ async def display_main_menu(message: types.Message):
 async def cmd_start(message: types.Message):
 
     # Check if we already have a file for this user
+    if not os.path.exists("users"):
+        os.makedirs("users")
+
     for file in listdir("users"):
-        if file.startswith(str(message.from_user.id)):
             await message.answer("You already have an account")
             break
     else:  # if doesnt break above
