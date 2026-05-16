@@ -12,6 +12,7 @@ from database import SchedulerDatabase
 
 logging.basicConfig(level=logging.INFO)
 
+# قراءة التوكن بأمان من متغيرات بيئة Railway
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -20,17 +21,17 @@ dp = Dispatcher(storage=storage)
 db_manager = SchedulerDatabase()
 post_scheduler = AsyncIOScheduler()
 
-# آلة الحالات لمحاكاة مراحل ControllerBot
+# آلة الحالات (FSM) لإدارة خطوات عمل الـ ControllerBot بدقة
 class ControllerStates(StatesGroup):
     waiting_for_channel_id = State()
     waiting_for_post_content = State()
     waiting_for_inline_buttons = State()
     waiting_for_schedule_time = State()
 
-# --- 📋 القوائم الرئيسية وهيكل الأزرار المطور ---
+# --- 🎛️ لوحات مفاتيح وهيكل ControllerBot الحقيقي ---
 
 def get_main_menu():
-    """القائمة الرئيسية الشبيهة بـ ControllerBot"""
+    """لوحة التحكم الرئيسية"""
     return types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="📝 إنشاء منشور جديد", callback_data="create_post")],
         [types.InlineKeyboardButton(text="📅 المنشورات المجدولة", callback_data="view_scheduled")],
@@ -38,7 +39,7 @@ def get_main_menu():
     ])
 
 def get_post_creation_menu():
-    """قائمة خيارات التعديل على المنشور قبل النشر"""
+    """لوحة خيارات التعديل والمعاينة قبل النشر الفعلي"""
     return types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="🔗 إضافة أزرار الرابط (URL)", callback_data="add_url_buttons")],
         [types.InlineKeyboardButton(text="🚀 نشر الآن", callback_data="publish_now")],
@@ -46,11 +47,11 @@ def get_post_creation_menu():
         [types.InlineKeyboardButton(text="❌ إلغاء المنشور", callback_data="cancel_creation")]
     ])
 
-# --- 🚀 معالجة الأوامر والوظائف التفاعلية ---
+# --- 🚀 مستمعات الأوامر والوظائف التفاعلية (Handlers) ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    """أمر البدء وفتح لوحة التحكم الذكية"""
+    """أمر البدء وعرض واجهة التحكم الشاملة"""
     if not os.path.exists("users"):
         os.makedirs("users")
         
@@ -61,14 +62,14 @@ async def cmd_start(message: types.Message):
     await message.answer(
         text="🤖 **أهلاً بك في لوحة تحكم ControllerBot المطور!**\n\n"
              "هذا البوت يتيح لك إدارة قنواتك، صناعة منشورات احترافية مزودة بأزرار روابط، وجدولتها للنشر التلقائي بكفاءة عالية.\n"
-             "يرجى اختيار أحد الأوامر من القائمة أدناه البدء:",
+             "يرجى اختيار أحد الأوامر من القائمة أدناه للبدء:",
         reply_markup=get_main_menu(),
         parse_mode="Markdown"
     )
 
 @dp.callback_query(lambda call: call.data == "manage_channels")
 async def manage_channels(call: types.CallbackQuery):
-    """عرض القنوات وإتاحة خيار الربط"""
+    """إدارة وربط القنوات بالنظام"""
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="➕ ربط قناة جديدة", callback_data="add_new_channel")],
         [types.InlineKeyboardButton(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_main")]
@@ -91,10 +92,10 @@ async def request_channel_id(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(ControllerStates.waiting_for_channel_id)
 async def process_channel_id(message: types.Message, state: FSMContext):
-    """حفظ القناة وطلب نص أو محتوى المنشور"""
+    """حفظ القناة وطلب محتوى الرسالة"""
     channel_id = message.text.strip()
-    if not channel_id.startswith("@"):
-        await message.answer("❌ معرف القناة خاطئ! يجب أن يبدأ بالعلامة @")
+    if not channel_id.startswith("@") and not channel_id.startswith("-100"):
+        await message.answer("❌ معرف القناة خاطئ! يجب أن يبدأ بالعلامة @ أو آيدي القناة المشفر.")
         return
     await state.update_data(target_channel=channel_id)
     await message.answer("📝 **رائع! الآن أرسل محتوى المنشور الخاص بك:**\n(يدعم النصوص، التنسيق، الروابط المدمجة وغيرها)")
@@ -102,7 +103,7 @@ async def process_channel_id(message: types.Message, state: FSMContext):
 
 @dp.message(ControllerStates.waiting_for_post_content)
 async def process_post_content(message: types.Message, state: FSMContext):
-    """عرض المنشور وفتح خيارات التعديل والنشر الشبيهة بـ ControllerBot"""
+    """حفظ النص وفتح واجهة التعديل والمعاينة الاحترافية للـ ControllerBot"""
     await state.update_data(post_text=message.text)
     user_data = await state.get_data()
     
@@ -128,7 +129,7 @@ async def request_url_buttons(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(ControllerStates.waiting_for_inline_buttons)
 async def process_inline_buttons(message: types.Message, state: FSMContext):
-    """معالجة الأزرار وصناعة المعاينة الجديدة للمنشور"""
+    """معالجة الأزرار ودمجها مع المعاينة الحية"""
     try:
         raw_text = message.text.strip()
         if " - " not in raw_text:
@@ -136,25 +137,37 @@ async def process_inline_buttons(message: types.Message, state: FSMContext):
             return
             
         btn_name, btn_url = raw_text.split(" - ")
-        inline_kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text=btn_name.strip(), url=btn_url.strip())]
-        ])
-        
+        # فحص برمي للتأكد من صحة الرابط
+        if not btn_url.strip().startswith("http"):
+            await message.answer("❌ خطأ: يجب أن يبدأ الرابط بـ http:// أو https://")
+            return
+
         await state.update_data(has_buttons=True, btn_name=btn_name.strip(), btn_url=btn_url.strip())
         user_data = await state.get_data()
         
+        reply_markup = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text=btn_name.strip(), url=btn_url.strip())]
+        ])
+        
         await message.answer(
-            text=f"👁️ **المعاينة النهائية للمنشور بالأزرار الروابط:**\n\n{user_data['post_text']}",
-            reply_markup=get_post_creation_menu(),
+            text=f"👁️ **المعاينة النهائية للمنشور بالأزرار التفاعلية المرفقة:**\n\n{user_data['post_text']}",
+            reply_markup=reply_markup,
             parse_mode="Markdown"
         )
+        # إرسال قائمة التحكم بالنشر مجدداً أسفل المعاينة المحدثة
+        await message.answer(text="⚙️ خيارات النشر والجدولة للمنشور الحالي:", reply_markup=get_post_creation_menu())
     except Exception:
         await message.answer("❌ حدث خطأ أثناء فحص الرابط والتنسيق المرفق.")
 
 @dp.callback_query(lambda call: call.data == "publish_now")
 async def publish_now(call: types.CallbackQuery, state: FSMContext):
-    """النشر الفوري في القناة التلغرام"""
+    """النشر الفوري والمباشر في القناة تلبية لخيارات اللوحة"""
     user_data = await state.get_data()
+    if not user_data.get("target_channel") or not user_data.get("post_text"):
+        await call.message.answer("❌ خطأ: لا توجد بيانات حالية للمنشور.")
+        await call.answer()
+        return
+
     try:
         reply_markup = None
         if user_data.get("has_buttons"):
@@ -162,16 +175,21 @@ async def publish_now(call: types.CallbackQuery, state: FSMContext):
                 [types.InlineKeyboardButton(text=user_data["btn_name"], url=user_data["btn_url"])]
             ])
             
-        await bot.send_message(chat_id=user_data['target_channel'], text=user_data['post_text'], reply_markup=reply_markup, parse_mode="Markdown")
+        await bot.send_message(
+            chat_id=user_data['target_channel'], 
+            text=user_data['post_text'], 
+            reply_markup=reply_markup, 
+            parse_mode="Markdown"
+        )
         await call.message.answer("🚀 **تم نشر المنشور الخاص بك في القناة بنجاح واحترافية تامة!**")
         await state.clear()
     except Exception as e:
-        await call.message.answer(f"❌ فشل النشر! تأكد من وجود البوت كأدمن في القناة المرتبطة. الخطأ: {e}")
+        await call.message.answer(f"❌ فشل النشر! تأكد من وجود البوت كأدمن في القناة وبنفس المعرف. الخطأ: {e}")
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "schedule_post")
 async def request_schedule_time(call: types.CallbackQuery, state: FSMContext):
-    """طلب تحديد وقت وتاريخ الجدولة"""
+    """طلب تحديد توقيت الجدولة التلقائية"""
     await call.message.answer(
         text="⏱️ **جدولة وقت النشر التلقائي:**\n\n"
              "يرجى إرسال التوقيت بصيغة النظام القياسية التالية:\n"
@@ -185,7 +203,7 @@ async def request_schedule_time(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(ControllerStates.waiting_for_schedule_time)
 async def process_schedule_time(message: types.Message, state: FSMContext):
-    """حفظ المنشور المجدول في قاعدة البيانات الذكية"""
+    """حفظ المنشور المجدول في قاعدة البيانات للتحقق وقذفه بالخلفية"""
     try:
         raw_time = message.text.strip()
         parsed_datetime = datetime.strptime(raw_time, "%Y-%m-%d %H:%M:%S")
@@ -196,7 +214,7 @@ async def process_schedule_time(message: types.Message, state: FSMContext):
             
         user_data = await state.get_data()
         
-        # تخزين البيانات في الجداول لقذفها تلقائياً بالخلفية
+        # تخزين المنشور في الجداول لجدولته
         db_manager.add_scheduled_post(
             channel_id=user_data['target_channel'],
             post_text=user_data['post_text'],
@@ -210,22 +228,22 @@ async def process_schedule_time(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "view_scheduled")
 async def view_scheduled(call: types.CallbackQuery):
-    """استعراض حالة نظام الفحص والجدولة"""
-    await call.message.answer("📊 **نظام الجدولة الذاتي مفعّل ويعمل في الخلفية لمراقبة المنشورات القادمة.**")
+    """استعراض المنشورات القادمة المجدولة"""
+    await call.message.answer("📊 **نظام الجدولة الفعلي مفعّل ويعمل بالخلفية بدقة لمراقبة وقذف المنشورات المجدولة.**")
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "cancel_creation")
 @dp.callback_query(lambda call: call.data == "back_to_main")
 async def cancel_and_return(call: types.CallbackQuery, state: FSMContext):
-    """إلغاء العمليات الحالية والعودة للقائمة الرئيسية"""
+    """إلغاء العمليات الحالية والعودة الآمنة للقائمة الرئيسية"""
     await state.clear()
     await call.message.edit_text(text="🤖 لوحة التحكم الرئيسية لـ ControllerBot مفعّلة وجاهزة لخدمتك:", reply_markup=get_main_menu())
     await call.answer()
 
-# --- ⏱️ محرك الجدولة التلقائي بالخلفية ---
+# --- ⏱️ محرك النشر والمزامنة بالخلفية (Background Worker) ---
 
 async def check_and_publish_pending_posts():
-    """فحص قاعدة البيانات كل 60 ثانية وإطلاق المنشورات المستحقة تلقائياً"""
+    """وظيفة تفحص الجداول تلقائياً كل دقيقة وتقذف الرسائل المستحقة للقنوات"""
     pending_posts = db_manager.get_pending_posts()
     for post in pending_posts:
         db_post_id, target_channel, text_to_publish = post
@@ -236,10 +254,11 @@ async def check_and_publish_pending_posts():
             pass
 
 async def main():
+    # جدولة المنبه الذكي داخلياً ليعمل كل 60 ثانية بشكل مستمر ومستقل
     post_scheduler.add_job(check_and_publish_pending_posts, 'interval', seconds=60)
     post_scheduler.start()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+            
