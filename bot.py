@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import os
+from os import listdir
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 from utility import generate_event_text, load_data, dump_data
-import os
 
 # تهيئة البوت والموزع المتوافق مع الإصدار الحديث مرة واحدة فقط
 bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
