@@ -244,10 +244,11 @@ async def delete_event(call: types.CallbackQuery):
 
 from database import SchedulerDatabase
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-db_manager = SchedulerDatabase()
-post_scheduler = AsyncioScheduler()
 
+db_manager = SchedulerDatabase()
 post_scheduler = AsyncIOScheduler()
+
+async def check_and_publish_pending_posts():
     """وظيفة تفحص المنشورات المجدولة وتصنع نشر تلقائي"""
     pending_posts_list = db_manager.get_pending_posts()
     for post in pending_posts_list:
