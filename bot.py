@@ -5,7 +5,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from os import listdir
 from time import strptime, sleep
 from utility import generate_event_text, load_data, dump_data
-from notifications_manager import set_up_notification, delete_notification
 import os
 
 # تهيئة البوت والموزع المتوافق مع الإصدار الحديث مرة واحدة فقط
